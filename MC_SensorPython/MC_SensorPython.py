@@ -61,15 +61,16 @@ class EventHubClient(object):
         for key, value in config.items():
             setattr(self, key, value)
 
-    def __init__(self, config_path = None, config = None):
+    def __init__(self, config_path = None, config = None, max_error_count = 0):
         assert config_path or config, 'A config is required.'
         
         if config_path:
             config = self.load_config(config_path)
 
         self.config = config
-        
         self.hostname = socket.gethostname()
+        self.error_count = 0
+        self.max_error_count = max_error_count
 
     def send_message(self, body, partition):
         httpclient = _HTTPClient(service_instance=self)
@@ -101,6 +102,9 @@ class EventHubClient(object):
 
         except HTTPError as ex:
             status = ex.status
+            self.error_count += 1
+            if self.error_count > self.max_error_count:
+                raise
 
         return status
 
@@ -108,7 +112,7 @@ class EventHubClient(object):
         return self.send_message(json.dumps(payload), sensor_id)
 
 
-class Telementry:
+class Telemetry:
 
     def __init__(self, device_id):
         self.device_id = device_id
@@ -130,10 +134,41 @@ EventHubClient.save_config(config_path,
                            policy_name = 'SendPolicy', 
                            policy_key = 'erENqf/5wdWCNEbCA9NsDIRqd5MRKdkii07+wezl/NU=')
 
-hubClient = EventHubClient(config_path=config_path)
-print 'EventHub', json.dumps(hubClient.config, indent = 2)
-sensor = Telementry('Device-50')
-payload = sensor.measure()
-print 'Payload', json.dumps(payload, indent = 2)
-response = hubClient.send_measurement(payload, sensor.device_id)
-print 'Response HTTP', response
+hub_client = EventHubClient(config_path=config_path)
+print 'EventHub', json.dumps(hub_client.config, indent = 2)
+
+# now the fancy stuff begins
+
+import threading
+import time
+
+sensor_count = 10
+measurement_interval = 10
+measurement_iterations = 10
+
+class Device(Telemetry, threading.Thread):
+
+    def __init__(self, device_id, hub_client, interval, iterations):
+        Telemetry.__init__(self, device_id)
+        threading.Thread.__init__(self)
+
+        self.hub_client = hub_client
+        self.interval = interval
+        self.iterations = iterations
+
+    def run(self):
+        for iteration in xrange(self.iterations):
+            payload = self.measure()
+            response = self.hub_client.send_measurement(payload, self.device_id)
+            time.sleep(self.interval)
+
+
+devices = [Device(device_id, hub_client, measurement_interval, measurement_iterations) for device_id in ['Device-%d' % index for index in range(1, 1 + sensor_count,)]]
+random.shuffle(devices)
+
+for device in devices:
+    device.start()
+    time.sleep(1) # for a little asyncronity
+
+for thread in devices:
+    thread.join()
