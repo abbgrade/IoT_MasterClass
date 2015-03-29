@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="content-type" content="text/html;charset=utf-8">
+  <title>MC_SensorPython.py</title>
+  <link rel="stylesheet" href="pycco.css">
+</head>
+<body>
+<div id='container'>
+  <div id="background"></div>
+  <div class='section'>
+    <div class='docs'><h1>MC_SensorPython.py</h1></div>
+  </div>
+  <div class='clearall'>
+  <div class='section' id='section-0'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-0'>#</a>
+      </div>
+      <p>This code is documented with <a href="https://github.com/fitzgen/pycco">Pycco</a>
+To build the docs run:</p>
+<pre><code>pycco.exe -p .\MC_SensorPython.py -d doc
+</code></pre>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre><span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">azure</span>
+<span class="kn">import</span> <span class="nn">socket</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="s">&#39;DEBUG&#39;</span><span class="p">)</span>
+
+<span class="kn">from</span> <span class="nn">azure.servicebus</span> <span class="kn">import</span> <span class="n">_service_bus_error_handler</span>
+<span class="kn">from</span> <span class="nn">azure.servicebus.servicebusservice</span> <span class="kn">import</span> <span class="n">ServiceBusService</span><span class="p">,</span> <span class="n">ServiceBusSASAuthentication</span>
+<span class="kn">from</span> <span class="nn">azure.http</span> <span class="kn">import</span> <span class="n">HTTPRequest</span><span class="p">,</span> <span class="n">HTTPError</span>
+<span class="kn">from</span> <span class="nn">azure.http.httpclient</span> <span class="kn">import</span> <span class="n">_HTTPClient</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-1'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-1'>#</a>
+      </div>
+      <h1>EventHub Client</h1>
+<p>The EventHubClient manages the transmission of payload to the Azure EventHub.
+It is based on <a href="http://blog.kloud.com.au/2014/10/11/the-internet-of-things-with-arduino-azure-event-hubs-and-the-azure-python-sdk/">a blog post from Olaf Loogman</a></p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-2'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-2'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre><span class="k">class</span> <span class="nc">EventHubClient</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-3'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-3'>#</a>
+      </div>
+      <h2>EventHub Config</h2>
+<p>The configuration consists of four strings: the service bus namespace, the event hub name, the policy name and the policy key.
+It has the form of a dict and can be loaded from and persisted to a JSON file with the classmethods load_config and save_config.
+It can be applied to the instance by setting a dict to self.config an can be exported by reading self.config .</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    
+    <span class="n">_config_keys</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;service_bus_namespace&#39;</span><span class="p">,</span> <span class="s">&#39;event_hub_name&#39;</span><span class="p">,</span> <span class="s">&#39;policy_name&#39;</span><span class="p">,</span> <span class="s">&#39;policy_key&#39;</span><span class="p">]</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-4'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-4'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">_check_config</span><span class="p">(</span><span class="n">cls</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">cls</span><span class="o">.</span><span class="n">_config_keys</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">config</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="s">&#39;The key </span><span class="si">%s</span><span class="s"> is an expected element of the configuration </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">config</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+            <span class="k">assert</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">cls</span><span class="o">.</span><span class="n">_config_keys</span><span class="p">,</span> <span class="s">&#39;The key </span><span class="si">%s</span><span class="s"> is an unexpected element of the configuration </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">load_config</span><span class="p">(</span><span class="n">cls</span><span class="p">,</span> <span class="n">path</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file_handle</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">file_handle</span><span class="p">)</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">save_config</span><span class="p">(</span><span class="n">cls</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">force</span> <span class="o">=</span> <span class="bp">True</span><span class="p">,</span> <span class="o">**</span><span class="n">config</span><span class="p">):</span>
+        <span class="n">cls</span><span class="o">.</span><span class="n">_check_config</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">path</span><span class="p">)</span> <span class="ow">or</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s">&#39;wb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file_handle</span><span class="p">:</span>
+                <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">file_handle</span><span class="p">,</span> <span class="n">indent</span> <span class="o">=</span> <span class="mi">2</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">config</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_config_keys</span><span class="p">:</span>
+            <span class="n">config</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">config</span>
+    
+    <span class="nd">@config.setter</span>
+    <span class="k">def</span> <span class="nf">config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_config</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">config</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-5'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-5'>#</a>
+      </div>
+      <h2>Constructor</h2>
+<p>A valid configuration is required. It can be passed by a dict at the config parameter or as a path to a JSON file at the config_path parameter.
+The max error count parameter is optional. It sets the number of non succesful requests to bring the client to an exception.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-6'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-6'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config_path</span> <span class="o">=</span> <span class="bp">None</span><span class="p">,</span> <span class="n">config</span> <span class="o">=</span> <span class="bp">None</span><span class="p">,</span> <span class="n">max_error_count</span> <span class="o">=</span> <span class="mi">0</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">config_path</span> <span class="ow">or</span> <span class="n">config</span><span class="p">,</span> <span class="s">&#39;A config is required.&#39;</span>
+        
+        <span class="k">if</span> <span class="n">config_path</span><span class="p">:</span>
+            <span class="n">config</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">hostname</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">gethostname</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">error_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_error_count</span> <span class="o">=</span> <span class="n">max_error_count</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-7'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-7'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">send_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">body</span><span class="p">,</span> <span class="n">partition</span><span class="p">):</span>
+        <span class="n">httpclient</span> <span class="o">=</span> <span class="n">_HTTPClient</span><span class="p">(</span><span class="n">service_instance</span><span class="o">=</span><span class="bp">self</span><span class="p">)</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-8'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-8'>#</a>
+      </div>
+      <p>The HTTPS POST request has to be set up with host, path and body, authenticated with SAS.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>        <span class="n">request</span> <span class="o">=</span> <span class="n">HTTPRequest</span><span class="p">()</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">method</span> <span class="o">=</span> <span class="s">&#39;POST&#39;</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">host</span> <span class="o">=</span> <span class="s">&#39;</span><span class="si">%s</span><span class="s">.servicebus.windows.net&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">service_bus_namespace</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">protocol_override</span> <span class="o">=</span> <span class="s">&#39;https&#39;</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="s">&#39;/</span><span class="si">%s</span><span class="s">/publishers/</span><span class="si">%s</span><span class="s">/messages?api-version=2014-05&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">event_hub_name</span><span class="p">,</span> <span class="n">partition</span><span class="p">)</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">body</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s">&#39;Content-Type&#39;</span><span class="p">,</span> <span class="s">&#39;application/atom+xml;type=entry;charset=utf-8&#39;</span><span class="p">))</span>
+
+        <span class="n">authentication</span> <span class="o">=</span> <span class="n">ServiceBusSASAuthentication</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">policy_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">policy_key</span><span class="p">)</span>
+        <span class="n">authentication</span><span class="o">.</span><span class="n">sign_request</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">httpclient</span><span class="p">)</span>
+
+        <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s">&#39;Content-Length&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">))))</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-9'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-9'>#</a>
+      </div>
+      <p>After the execution, the response status has to be processed and if the max error limit is reached, the exception has to be escalated.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>        <span class="n">status</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="n">httpclient</span><span class="o">.</span><span class="n">perform_request</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">status</span>
+        
+        <span class="k">except</span> <span class="n">HTTPError</span> <span class="k">as</span> <span class="n">ex</span><span class="p">:</span>
+            <span class="n">status</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">status</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">error_count</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">error_count</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_error_count</span><span class="p">:</span>
+                <span class="k">raise</span>
+
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">logging</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> &quot;</span><span class="si">%s</span><span class="s">&quot; to </span><span class="si">%s</span><span class="s">://</span><span class="si">%s%s</span><span class="s"> -&gt; </span><span class="si">%d</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="p">,</span> <span class="n">body</span><span class="p">,</span> <span class="n">request</span><span class="o">.</span><span class="n">protocol_override</span><span class="p">,</span> <span class="n">request</span><span class="o">.</span><span class="n">host</span><span class="p">,</span> <span class="n">request</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">status</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="n">status</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-10'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-10'>#</a>
+      </div>
+      <h1>Example</h1>
+<p>The test case is that a few individual sensors produce temperature, humindity and pollution values, that have to be send to the EventHub.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-11'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-11'>#</a>
+      </div>
+      <h2>The Telemetry Class</h2>
+<p>The telemetry class just generates the values and returns them on demand.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-12'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-12'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre><span class="k">class</span> <span class="nc">Telemetry</span><span class="p">:</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-13'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-13'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_id</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device_id</span> <span class="o">=</span> <span class="n">device_id</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-14'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-14'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">measure</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s">&#39;DeviceId&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">device_id</span><span class="p">,</span>
+            <span class="s">&#39;Temperature&#39;</span><span class="p">:</span> <span class="mf">27.5</span><span class="p">,</span>
+            <span class="s">&#39;Humidity&#39;</span><span class="p">:</span> <span class="mf">68.3</span><span class="p">,</span>
+            <span class="s">&#39;Pollution&#39;</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">*</span> <span class="mi">100</span>
+        <span class="p">}</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-15'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-15'>#</a>
+      </div>
+      <h2>The TelemetryHubClient Class</h2>
+<p>The TelemetryHubClient extends the EventHubClient with an method to send measurements.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-16'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-16'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre><span class="k">class</span> <span class="nc">TelemetryHubClient</span><span class="p">(</span><span class="n">EventHubClient</span><span class="p">):</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-17'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-17'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">send_measurement</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">measurement</span><span class="p">,</span> <span class="n">sensor_id</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">send_message</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">measurement</span><span class="p">),</span> <span class="n">sensor_id</span><span class="p">)</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-18'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-18'>#</a>
+      </div>
+      <h2>The Device Class</h2>
+<p>The Device mimics the operating system of a data generating device.
+It runs in a thread and measures in a given interval for given number of iterations.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-19'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-19'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre><span class="k">class</span> <span class="nc">Device</span><span class="p">(</span><span class="n">Telemetry</span><span class="p">,</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">):</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-20'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-20'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_id</span><span class="p">,</span> <span class="n">hub_client</span><span class="p">,</span> <span class="n">interval</span><span class="p">,</span> <span class="n">iterations</span><span class="p">):</span>
+        <span class="n">Telemetry</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_id</span><span class="p">)</span>
+        <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">hub_client</span> <span class="o">=</span> <span class="n">hub_client</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="o">=</span> <span class="n">interval</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">iterations</span> <span class="o">=</span> <span class="n">iterations</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-21'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-21'>#</a>
+      </div>
+      
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">iteration</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">iterations</span><span class="p">):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">payload</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">measure</span><span class="p">()</span>
+                <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">hub_client</span><span class="o">.</span><span class="n">send_measurement</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">device_id</span><span class="p">)</span>
+        
+            <span class="k">except</span><span class="p">:</span>
+                <span class="n">logging</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> stopped working.&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">device_id</span><span class="p">)</span>
+                <span class="k">return</span>
+
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">interval</span><span class="p">)</span>
+
+        <span class="n">logging</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> finished measurment sequence.&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">device_id</span><span class="p">)</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-22'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-22'>#</a>
+      </div>
+      <h1>Script</h1>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre><span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&quot;__main__&quot;</span><span class="p">:</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-23'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-23'>#</a>
+      </div>
+      <p>If no configuration exists create one in the local directory.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="n">config_path</span> <span class="o">=</span> <span class="s">&#39;event_hub_config.json&#39;</span>
+    
+    <span class="n">TelemetryHubClient</span><span class="o">.</span><span class="n">save_config</span><span class="p">(</span>
+        <span class="n">config_path</span><span class="p">,</span>
+        <span class="n">force</span> <span class="o">=</span> <span class="bp">False</span><span class="p">,</span> 
+        <span class="n">service_bus_namespace</span> <span class="o">=</span> <span class="s">&#39;myservicebusnamespace&#39;</span><span class="p">,</span> 
+        <span class="n">event_hub_name</span> <span class="o">=</span> <span class="s">&#39;myhub&#39;</span><span class="p">,</span> 
+        <span class="n">policy_name</span> <span class="o">=</span> <span class="s">&#39;SendPolicy&#39;</span><span class="p">,</span> 
+        <span class="n">policy_key</span> <span class="o">=</span> <span class="s">&#39;erENqf/5wdWCNEbCA9NsDIRqd5MRKdkii07+wezl/NU=&#39;</span><span class="p">)</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-24'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-24'>#</a>
+      </div>
+      <p>Instantiate a client and the active config to debug purposes</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="n">hub_client</span> <span class="o">=</span> <span class="n">TelemetryHubClient</span><span class="p">(</span><span class="n">config_path</span><span class="o">=</span><span class="n">config_path</span><span class="p">)</span>
+    <span class="k">print</span> <span class="s">&#39;EventHub&#39;</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">hub_client</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">indent</span> <span class="o">=</span> <span class="mi">2</span><span class="p">)</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-25'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-25'>#</a>
+      </div>
+      <p>Configure the number and properties of the devices and instantiate them.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="n">sensor_count</span> <span class="o">=</span> <span class="mi">10</span>
+    <span class="n">measurement_interval</span> <span class="o">=</span> <span class="mi">10</span>
+    <span class="n">measurement_iterations</span> <span class="o">=</span> <span class="mi">100</span>
+
+    <span class="n">devices</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">Device</span><span class="p">(</span><span class="n">device_id</span><span class="p">,</span> <span class="n">hub_client</span><span class="p">,</span> <span class="n">measurement_interval</span><span class="p">,</span> <span class="n">measurement_iterations</span><span class="p">)</span> 
+        <span class="k">for</span> <span class="n">device_id</span> 
+        <span class="ow">in</span> <span class="p">[</span>
+            <span class="s">&#39;Device-</span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">index</span> 
+            <span class="k">for</span> <span class="n">index</span> 
+            <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">sensor_count</span><span class="p">)</span>
+            <span class="p">]</span>
+        <span class="p">]</span>
+    <span class="n">random</span><span class="o">.</span><span class="n">shuffle</span><span class="p">(</span><span class="n">devices</span><span class="p">)</span> <span class="c"># for a little nondeterminism</span>
+
+    <span class="k">for</span> <span class="n">device</span> <span class="ow">in</span> <span class="n">devices</span><span class="p">:</span>
+        <span class="n">device</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c"># for a little asyncronity</span></pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+  <div class='section' id='section-26'>
+    <div class='docs'>
+      <div class='octowrap'>
+        <a class='octothorpe' href='#section-26'>#</a>
+      </div>
+      <p>Wait until the last device stops.</p>
+    </div>
+    <div class='code'>
+      <div class="highlight"><pre>    <span class="k">for</span> <span class="n">thread</span> <span class="ow">in</span> <span class="n">devices</span><span class="p">:</span>
+        <span class="n">thread</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+
+</pre></div>
+    </div>
+  </div>
+  <div class='clearall'></div>
+</div>
+</body>

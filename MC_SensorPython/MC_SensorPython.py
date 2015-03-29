@@ -1,8 +1,8 @@
 #!/user/bin/python
-
-'''
-    based on http://blog.kloud.com.au/2014/10/11/the-internet-of-things-with-arduino-azure-event-hubs-and-the-azure-python-sdk/
-'''
+# This code is documented with [Pycco](https://github.com/fitzgen/pycco)
+# To build the docs run:
+# 
+#     pycco.exe -p .\MC_SensorPython.py -d doc 
 
 import sys
 import os
@@ -10,8 +10,9 @@ import azure
 import socket
 import json
 import random
+import threading
+import time
 import logging
-
 logging.basicConfig(level='DEBUG')
 
 from azure.servicebus import _service_bus_error_handler
@@ -19,8 +20,16 @@ from azure.servicebus.servicebusservice import ServiceBusService, ServiceBusSASA
 from azure.http import HTTPRequest, HTTPError
 from azure.http.httpclient import _HTTPClient
 
+## EventHub Client
+    # The EventHubClient manages the transmission of payload to the Azure EventHub.
+    # It is based on [a blog post from Olaf Loogman](http://blog.kloud.com.au/2014/10/11/the-internet-of-things-with-arduino-azure-event-hubs-and-the-azure-python-sdk/)
 
 class EventHubClient(object):
+    
+    ### EventHub Config
+    # The configuration consists of four strings: the service bus namespace, the event hub name, the policy name and the policy key.
+    # It has the form of a dict and can be loaded from and persisted to a JSON file with the classmethods load_config and save_config.
+    # It can be applied to the instance by setting a dict to self.config an can be exported by reading self.config .
     
     _config_keys = ['service_bus_namespace', 'event_hub_name', 'policy_name', 'policy_key']
 
@@ -33,17 +42,17 @@ class EventHubClient(object):
             assert key in cls._config_keys, 'The key %s is an unexpected element of the configuration %s' % (key, config)
 
     @classmethod
+    def load_config(cls, path):
+        with open(path, 'rb') as file_handle:
+            return json.load(file_handle)
+
+    @classmethod
     def save_config(cls, path, force = True, **config):
         cls._check_config(config)
 
         if not os.path.exists(path) or force:
             with open(path, 'wb') as file_handle:
                 json.dump(config, file_handle, indent = 2)
-
-    @classmethod
-    def load_config(cls, path):
-        with open(path, 'rb') as file_handle:
-            return json.load(file_handle)
 
     @property
     def config(self):
@@ -61,6 +70,10 @@ class EventHubClient(object):
         for key, value in config.items():
             setattr(self, key, value)
 
+    ### Constructor
+    # A valid configuration is required. It can be passed by a dict at the config parameter or as a path to a JSON file at the config_path parameter.
+    # The max error count parameter is optional. It sets the number of non succesful requests to bring the client to an exception.
+
     def __init__(self, config_path = None, config = None, max_error_count = 0):
         assert config_path or config, 'A config is required.'
         
@@ -75,7 +88,8 @@ class EventHubClient(object):
     def send_message(self, body, partition):
         httpclient = _HTTPClient(service_instance=self)
 
-        # build request
+        # The HTTPS POST request has to be set up with host, path and body, authenticated with SAS.
+
         request = HTTPRequest()
         request.method = 'POST'
         request.host = '%s.servicebus.windows.net' % self.service_bus_namespace
@@ -84,33 +98,35 @@ class EventHubClient(object):
         request.body = body
         request.headers.append(('Content-Type', 'application/atom+xml;type=entry;charset=utf-8'))
 
-        logging.debug('%s "%s" to %s://%s%s', request.method, body, request.protocol_override, request.host, request.path)
-    
-        # authenticate request
         authentication = ServiceBusSASAuthentication(self.policy_name, self.policy_key)
         authentication.sign_request(request, httpclient)
 
-        # verify request
         request.headers.append(('Content-Length', str(len(request.body))))
 
-        # send request
-        status = 0
+        # After the execution, the response status has to be processed and if the max error limit is reached, the exception has to be escalated.
 
+        status = 0
         try:
             resp = httpclient.perform_request(request)
             status = resp.status
-
+        
         except HTTPError as ex:
             status = ex.status
             self.error_count += 1
             if self.error_count > self.max_error_count:
                 raise
 
+        finally:
+            logging.debug('%s "%s" to %s://%s%s -> %d', request.method, body, request.protocol_override, request.host, request.path, status)
+        
         return status
 
-    def send_measurement(self, payload, sensor_id):
-        return self.send_message(json.dumps(payload), sensor_id)
 
+## Example
+# The test case is that a few individual sensors produce temperature, humindity and pollution values, that have to be send to the EventHub.
+
+### The Telemetry Class
+# The telemetry class just generates the values and returns them on demand.
 
 class Telemetry:
 
@@ -126,25 +142,18 @@ class Telemetry:
         }
 
 
-config_path = 'event_hub_config.json'
-EventHubClient.save_config(config_path,
-                           force = False, 
-                           service_bus_namespace = 'myservicebusnamespace', 
-                           event_hub_name = 'myhub', 
-                           policy_name = 'SendPolicy', 
-                           policy_key = 'erENqf/5wdWCNEbCA9NsDIRqd5MRKdkii07+wezl/NU=')
+### The TelemetryHubClient Class
+# The TelemetryHubClient extends the EventHubClient with an method to send measurements.
 
-hub_client = EventHubClient(config_path=config_path)
-print 'EventHub', json.dumps(hub_client.config, indent = 2)
+class TelemetryHubClient(EventHubClient):
 
-# now the fancy stuff begins
+    def send_measurement(self, measurement, sensor_id):
+        return self.send_message(json.dumps(measurement), sensor_id)
 
-import threading
-import time
-
-sensor_count = 10
-measurement_interval = 10
-measurement_iterations = 10
+    
+### The Device Class
+# The Device mimics the operating system of a data generating device.
+# It runs in a thread and measures in a given interval for given number of iterations.
 
 class Device(Telemetry, threading.Thread):
 
@@ -158,17 +167,62 @@ class Device(Telemetry, threading.Thread):
 
     def run(self):
         for iteration in xrange(self.iterations):
-            payload = self.measure()
-            response = self.hub_client.send_measurement(payload, self.device_id)
+            try:
+                payload = self.measure()
+                response = self.hub_client.send_measurement(payload, self.device_id)
+        
+            except:
+                logging.debug('%s stopped working.', self.device_id)
+                return
+
             time.sleep(self.interval)
 
+        logging.debug('%s finished measurment sequence.', self.device_id)
 
-devices = [Device(device_id, hub_client, measurement_interval, measurement_iterations) for device_id in ['Device-%d' % index for index in range(1, 1 + sensor_count,)]]
-random.shuffle(devices)
 
-for device in devices:
-    device.start()
-    time.sleep(1) # for a little asyncronity
+## Script
 
-for thread in devices:
-    thread.join()
+if __name__ == "__main__":
+    
+    # If no configuration exists create one in the local directory.
+
+    config_path = 'event_hub_config.json'
+    
+    TelemetryHubClient.save_config(
+        config_path,
+        force = False, 
+        service_bus_namespace = 'myservicebusnamespace', 
+        event_hub_name = 'myhub', 
+        policy_name = 'SendPolicy', 
+        policy_key = 'erENqf/5wdWCNEbCA9NsDIRqd5MRKdkii07+wezl/NU=')
+
+    # Instantiate a client and the active config to debug purposes
+
+    hub_client = TelemetryHubClient(config_path=config_path)
+    print 'EventHub', json.dumps(hub_client.config, indent = 2)
+
+    # Configure the number and properties of the devices and instantiate them.
+
+    sensor_count = 10
+    measurement_interval = 10
+    measurement_iterations = 100
+
+    devices = [
+        Device(device_id, hub_client, measurement_interval, measurement_iterations) 
+        for device_id 
+        in [
+            'Device-%d' % index 
+            for index 
+            in range(1, 1 + sensor_count)
+            ]
+        ]
+    random.shuffle(devices) # for a little nondeterminism
+
+    for device in devices:
+        device.start()
+        time.sleep(1) # for a little asyncronity
+
+    # Wait until the last device stops.
+
+    for thread in devices:
+        thread.join()
