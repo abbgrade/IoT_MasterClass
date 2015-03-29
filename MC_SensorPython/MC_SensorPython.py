@@ -10,6 +10,9 @@ import azure
 import socket
 import json
 import random
+import logging
+
+logging.basicConfig(level='DEBUG')
 
 from azure.servicebus import _service_bus_error_handler
 from azure.servicebus.servicebusservice import ServiceBusService, ServiceBusSASAuthentication
@@ -18,11 +21,7 @@ from azure.http.httpclient import _HTTPClient
 
 
 class EventHubClient(object):
-    '''
-    @classmethod
-    def write_config(cls, values, path):
-    '''
-
+    
     _config_keys = ['service_bus_namespace', 'event_hub_name', 'policy_name', 'policy_key']
 
     @classmethod
@@ -46,8 +45,19 @@ class EventHubClient(object):
         with open(path, 'rb') as file_handle:
             return json.load(file_handle)
 
-    def _apply_config(self, config):
+    @property
+    def config(self):
+        config = {}
+
+        for key in self._config_keys:
+            config[key] = getattr(self, key)
+
+        return config
+    
+    @config.setter
+    def config(self, config):
         self._check_config(config)
+
         for key, value in config.items():
             setattr(self, key, value)
 
@@ -57,7 +67,7 @@ class EventHubClient(object):
         if config_path:
             config = self.load_config(config_path)
 
-        self._apply_config(config)
+        self.config = config
         
         self.hostname = socket.gethostname()
 
@@ -72,6 +82,8 @@ class EventHubClient(object):
         request.path = '/%s/publishers/%s/messages?api-version=2014-05' % (self.event_hub_name, partition)
         request.body = body
         request.headers.append(('Content-Type', 'application/atom+xml;type=entry;charset=utf-8'))
+
+        logging.debug('%s "%s" to %s://%s%s', request.method, body, request.protocol_override, request.host, request.path)
     
         # authenticate request
         authentication = ServiceBusSASAuthentication(self.policy_name, self.policy_key)
@@ -119,7 +131,9 @@ EventHubClient.save_config(config_path,
                            policy_key = 'erENqf/5wdWCNEbCA9NsDIRqd5MRKdkii07+wezl/NU=')
 
 hubClient = EventHubClient(config_path=config_path)
+print 'EventHub', json.dumps(hubClient.config, indent = 2)
 sensor = Telementry('Device-50')
 payload = sensor.measure()
-print 'Payload', json.dumps(payload, indent=2)
-print 'Response HTTP', hubClient.send_measurement(payload, sensor.device_id)
+print 'Payload', json.dumps(payload, indent = 2)
+response = hubClient.send_measurement(payload, sensor.device_id)
+print 'Response HTTP', response
