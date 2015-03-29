@@ -223,3 +223,4 @@ UpgradeLog*.htm
 
 # Microsoft Fakes
 FakesAssemblies/
+/MC_SensorPython/event_hub_config.json
